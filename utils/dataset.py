@@ -2,7 +2,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import logging
-import skimage.io as skio
 import os
 import scipy.ndimage as ndi
 from skimage.exposure import equalize_adapthist

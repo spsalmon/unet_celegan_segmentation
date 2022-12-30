@@ -21,4 +21,4 @@ LEARNING_RATE=0.0001
 
 METHOD="binary"
 
-python3 train.py -b 15 -e 31 -t 1 -d 256 --training-dir "$TRAINING_DIR" --validation-dir "$VALIDATION_DIR" --learning-rate $LEARNING_RATE --method "$METHOD"
+python3 train.py -b 2 -e 31 -t 1 -d 1056 --training-dir "$TRAINING_DIR" --validation-dir "$VALIDATION_DIR" --learning-rate $LEARNING_RATE --method "$METHOD"

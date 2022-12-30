@@ -157,7 +157,7 @@ def get_args() -> argparse.Namespace:
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # Add the arguments to the parser
-    parser.add_argument('-b', '--batch-size', metavar='B', type=int, default=2,
+    parser.add_argument('-b', '--batch-size', metavar='B', type=int, default=6,
                         help='Batch size', dest='batch_size')
     parser.add_argument('-i', '--images-dir', type=str, required=True,
                         help='Directory containing the input images', dest='raw_dir')

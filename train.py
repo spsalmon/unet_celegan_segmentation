@@ -303,7 +303,7 @@ def get_args() -> argparse.Namespace:
                         help='Segmentation method, should be either "binary" or "semantic"')
     parser.add_argument('-c', '--classes', dest='n_classes', type=int, default=None,
                         help='Use if method is set to "semantic", number of classes for the segmentation.')
-    parser.add_argument('-t', '--save-frequency', dest='save_frequency', type=int, default=2,
+    parser.add_argument('-t', '--save-frequency', dest='save_frequency', type=int, default=1,
                         help='Save and test frequency')
     parser.add_argument('--training-dir', dest='training_dir', type=str, required=True,
                         help='Path to the directory containing the training set')
