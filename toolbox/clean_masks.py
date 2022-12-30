@@ -1,13 +1,10 @@
 import multiprocessing as mp
-import numpy as np
 import cv2
-from skimage import measure, filters, morphology
+from skimage import filters, morphology
 from skimage.morphology import remove_small_holes
 import os
 import tifffile as ti
 import argparse
-
-pixelsize = 0.65
 
 # def filter_small_objects(mask, area_threshold):
 

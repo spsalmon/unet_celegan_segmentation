@@ -2,14 +2,13 @@ import argparse
 import logging
 import os
 import sys
+from typing import Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch import optim
 from tqdm import tqdm
 
-from model import U_Net
 from model import AttU_Net
 from utils.loss_function import *
 from utils.accuracy import *
@@ -21,32 +20,61 @@ from utils.dataset import TrainingDataset
 from torch.utils.data import DataLoader
 from collections import OrderedDict
 
+logging.basicConfig()
+
 # Path where you want your checkpoints saved :
 dir_checkpoints = './checkpoints/'
 
 
-def load_model(device, model_path, n_channels, n_classes):
+def load_model_parallel(model_path: str, device: torch.device) -> Tuple[nn.Module, int, int, int, int, float]:
+    """
+    Loads the model from the given path and returns it as a DataParallel model, along with other relevant information.
 
-    # Load model
-    net = AttU_Net(n_channels, n_classes=n_classes)
+    Parameters:
+        model_path (str): The path to the model checkpoint.
+        device (torch.device): The device to load the model onto.
+
+    Returns:
+        tuple: A tuple containing the following elements:
+            - nn.Module: The loaded model wrapped in a DataParallel module.
+            - int: The epoch at which the model was trained.
+            - int: The size of the model input.
+            - int: The number of channels in the model input.
+            - int: The number of classes in the model output.
+            - float: The IoU (intersection over union) value for the model.
+    """
+    print("Let's use", torch.cuda.device_count(), "GPUs!")
+    # Load the checkpoint from the given path and extract relevant information
     checkpoint = torch.load(model_path, map_location=device)
-    net.to(device=device)
-
     state_dict = checkpoint['model_state_dict']
-    # create new OrderedDict that does not contain `module.`
-    new_state_dict = OrderedDict()
+    epoch = checkpoint['epoch']
+    iou_val = checkpoint['iou_val']
+    dim = checkpoint['dim']
+    n_classes = checkpoint['n_classes']
+    n_channels = checkpoint['n_channels']
 
+    # Create an instance of the Attention UNet model
+    unet = AttU_Net(n_channels=n_channels, n_classes=n_classes)
+
+    # Create a new ordered dictionary to store the state dictionary without the `module.` prefix
+    new_state_dict = OrderedDict()
     for k, v in state_dict.items():
         name = k[7:]  # remove `module.`
         new_state_dict[name] = v
-    # load params
+    unet.load_state_dict(new_state_dict)
+    logging.info(f'Model loaded from {model_path}')
 
-    net.load_state_dict(new_state_dict)
+    del state_dict
+    torch.cuda.empty_cache()
 
-    print("Model : epoch = %s | accuracy = %s" %
-          (checkpoint['epoch'], checkpoint['accuracy_train']))
+    # Wrap the model in a DataParallel module
+    unet = nn.parallel.DataParallel(unet)
 
-    return {'net': net, 'device': device, 'epoch': checkpoint['epoch']}
+    # Move model to the chosen device
+    unet.to(device=device)
+
+    # Return network and relevant information about it
+    return unet, epoch, dim, n_channels, n_classes, iou_val
 
 
 def train_net(net,
@@ -248,31 +276,43 @@ def train_net(net,
     writer.close()
 
 
-def get_args():
+def get_args() -> argparse.Namespace:
+    """
+    Parses the command-line arguments and returns them as a namespace object.
+
+    Returns:
+        argparse.Namespace: The namespace object containing the parsed arguments.
+    """
+    # Create a parser and set the formatter class to ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-e', '--epochs', metavar='E', type=int, default=21,
-                        help='Number of epochs', dest='epochs')
-    parser.add_argument('-b', '--batch-size', metavar='B', type=int, nargs='?', default=1,
-                        help='Batch size', dest='batchsize')
-    parser.add_argument('-l', '--learning-rate', type=float, nargs='?', default=1e-4,
-                        help='Learning rate', dest='lr')
-    parser.add_argument('-f', '--load', dest='load', type=str, default=False,
+    
+    # Add the arguments to the parser
+    parser.add_argument('-e', '--epochs', dest="epochs", type=int, default=21,
+                        help='Number of epochs')
+    parser.add_argument('-b', '--batch-size', dest="batch_size", type=int, default=1,
+                        help='Batch size')
+    parser.add_argument('-l', '--learning-rate', dest="lr", type=float, default=1e-4,
+                        help='Learning rate')
+    parser.add_argument('-f', '--load', dest='load', type=str, default=None,
                         help='Load model from a .pth file')
     parser.add_argument('-d', '--dim', dest='dim', type=int, default=512,
                         help='Downscaling factor of the images')
     parser.add_argument('-m', '--method', dest='method', type=str, default="binary",
+                        choices=["binary", "semantic"],
                         help='Segmentation method, should be either "binary" or "semantic"')
     parser.add_argument('-c', '--classes', dest='n_classes', type=int, default=None,
                         help='Use if method is set to "semantic", number of classes for the segmentation.')
     parser.add_argument('-t', '--save-frequency', dest='save_frequency', type=int, default=2,
-                        help='Save and test frenquency')
+                        help='Save and test frequency')
     parser.add_argument('--training-dir', dest='training_dir', type=str, required=True,
                         help='Path to the directory containing the training set')
     parser.add_argument('--validation-dir', dest='validation_dir', type=str, required=True,
                         help='Path to the directory containing the validation set')
 
+    # Parse the arguments and return the resulting namespace object
     return parser.parse_args()
+
 
 
 if __name__ == '__main__':
@@ -337,7 +377,7 @@ if __name__ == '__main__':
                   dataset_train=dataset_train,
                   dataset_val=dataset_val,
                   method=args.method,
-                  batch_size=args.batchsize,
+                  batch_size=args.batch_size,
                   lr=args.lr,
                   save_frequency=args.save_frequency,
                   dim=args.dim)
