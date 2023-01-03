@@ -1,6 +1,6 @@
 # What does this code do ?
 
-This code is a pytorch implementation of different UNet architectures. It's supposed to be an easy to use package for training binary or semantic segmentation models and prediction segmentation masks. It is currently optimized for the segmentating C. Elegans microscopy images without body fluorescence. With little efforts, it could be tweeked to work for any kind of images. 
+This code is a pytorch implementation of different UNet architectures. It's supposed to be an easy to use package for training binary or semantic segmentation models and prediction segmentation masks. It is currently optimized for the segmenting C. Elegans microscopy images without body fluorescence. With little efforts, it could be tweeked to work for any kind of images. 
 
 # How to use this code
 
