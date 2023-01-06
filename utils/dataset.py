@@ -23,6 +23,8 @@ def get_number_of_channels_img(img: str) -> int:
         int: number of channels in the image
     """
     img_array = ti.imread(img)
+    if len(img_array.shape) == 2:
+        img_array = np.expand_dims(img_array, 0)
     return img_array.shape[0]
 
 
@@ -61,7 +63,7 @@ class TrainingDataset(Dataset):
         dim (int, optional): Downscaling factor of the images. Defaults to 512.
     """
 
-    def __init__(self, imgs_dir, masks_dir, n_classes=None, method="binary", dim=512):
+    def __init__(self, imgs_dir, masks_dir, n_channels = None, n_classes=None, method="binary", dim=512):
         assert (method == "binary" or method ==
                 "semantic"), "Unknown method, should be 'binary' or 'semantic'"
         try:
@@ -69,7 +71,8 @@ class TrainingDataset(Dataset):
             self.masks_dir = masks_dir
 
             # Get the number of channels in the images in the directory
-            self.n_channels = get_number_of_channels_database(imgs_dir)
+            if n_channels is None:
+                self.n_channels = get_number_of_channels_database(imgs_dir)
 
             if method == "binary":
                 self.n_classes = 1
@@ -89,7 +92,7 @@ class TrainingDataset(Dataset):
         return len(self.ids)
 
     @classmethod
-    def preprocess_img(cls, img, dim, augment_contrast=True):
+    def preprocess_img(cls, img, dim, n_channels, augment_contrast=True):
         """
         Preprocesses the image to be fed into the model. Optionally augments the contrast of the image.
         Scales the image down to the specified dimensions.
@@ -102,36 +105,67 @@ class TrainingDataset(Dataset):
         Returns:
             np.ndarray: The preprocessed image.
         """
-        if augment_contrast == True:
-            # Augment the image's contrast
-            improved_img = np.empty_like(img, dtype="float64")
-            improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
-                img[0, :, :]) - 1, clip_limit=0.0005, kernel_size=int(img[0, :, :].shape[0]/16))
-            improved_img[1, :, :] = equalize_adapthist(img[1, :, :], nbins=np.max(
-                img[1, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[1, :, :].shape[0]/16))
+        if n_channels == 2:
+            if augment_contrast == True:
+                # Augment the image's contrast
+                improved_img = np.empty_like(img, dtype="float64")
+                improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
+                    img[0, :, :]) - 1, clip_limit=0.0005, kernel_size=int(img[0, :, :].shape[0]/16))
+                improved_img[1, :, :] = equalize_adapthist(img[1, :, :], nbins=np.max(
+                    img[1, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[1, :, :].shape[0]/16))
 
-            # Resize the image
-            scale_x = dim/img.shape[1]
-            scale_y = dim/img.shape[2]
-            processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
 
-            processed_img = processed_img.transpose(
-                (0, 1, 2)).astype('float64')
+                processed_img = processed_img.transpose(
+                    (0, 1, 2)).astype('float64')
 
-        else:
-            # Normalize the image
-            normalized_img = np.empty_like(img, dtype="float64")
-            normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
-            normalized_img[1, :, :] = img[1, :, :]/np.max(img[1, :, :])
+            else:
+                # Normalize the image
+                normalized_img = np.empty_like(img, dtype="float64")
+                normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
+                normalized_img[1, :, :] = img[1, :, :]/np.max(img[1, :, :])
 
-            # Resize the image
-            scale_x = dim/img.shape[1]
-            scale_y = dim/img.shape[2]
-            processed_img = ndi.zoom(normalized_img, zoom=[
-                                     1, scale_x, scale_y])
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(normalized_img, zoom=[
+                                        1, scale_x, scale_y])
 
-            processed_img = processed_img.astype('float64')
-        return processed_img
+                processed_img = processed_img.astype('float64')
+            return processed_img
+            
+        elif n_channels == 1:
+            img = np.expand_dims(img, 0)
+            if augment_contrast == True:
+                # Augment the image's contrast
+                improved_img = np.empty_like(img, dtype="float64")
+                improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
+                    img[0, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[0, :, :].shape[0]/16))
+
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
+
+                processed_img = processed_img.transpose(
+                    (0, 1, 2)).astype('float64')
+
+            else:
+                # Normalize the image
+                normalized_img = np.empty_like(img, dtype="float64")
+                normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
+
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(normalized_img, zoom=[
+                                        1, scale_x, scale_y])
+
+                processed_img = processed_img.astype('float64')
+            return processed_img
 
     @classmethod
     def preprocess_mask(cls, mask, dim: int):
@@ -171,7 +205,7 @@ class TrainingDataset(Dataset):
             f'Image and mask {idx} should be the same size, but are {img.shape[0]} and {mask.shape}'
 
         # Preprocess the image and mask
-        img = self.preprocess_img(img, self.dim).astype('float64')
+        img = self.preprocess_img(img, self.dim, self.n_channels).astype('float64')
         mask = self.preprocess_mask(mask, self.dim).astype('float64')
 
         return {'image': torch.tensor(img), 'mask': torch.tensor(mask)}
@@ -187,9 +221,12 @@ class PredictionDataset(Dataset):
         n_classes (int): Number of classes for the segmentation.
         dim (int, optional): Downscaling factor of the images. Defaults to 512.
     """
-    def __init__(self, imgs_dir, n_classes, dim=512):
+    def __init__(self, imgs_dir, n_classes, n_channels = None, dim=512):
         self.imgs_dir = imgs_dir
-        self.n_channels = get_number_of_channels_database(imgs_dir)
+
+        if n_channels is None:
+            self.n_channels = get_number_of_channels_database(imgs_dir)
+            
         self.n_classes = n_classes
         self.dim = dim
 
@@ -200,7 +237,7 @@ class PredictionDataset(Dataset):
         return len(self.ids)
 
     @classmethod
-    def preprocess_img(cls, img, dim, augment_contrast=True):
+    def preprocess_img(cls, img, dim, n_channels, augment_contrast=True):
         """
         Preprocesses the image to be fed into the model. Optionally augments the contrast of the image.
         Scales the image down to the specified dimensions.
@@ -213,36 +250,67 @@ class PredictionDataset(Dataset):
         Returns:
             np.ndarray: The preprocessed image.
         """
-        if augment_contrast == True:
-            # Augment the image's contrast
-            improved_img = np.empty_like(img, dtype="float64")
-            improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
-                img[0, :, :]) - 1, clip_limit=0.0005, kernel_size=int(img[0, :, :].shape[0]/16))
-            improved_img[1, :, :] = equalize_adapthist(img[1, :, :], nbins=np.max(
-                img[1, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[1, :, :].shape[0]/16))
+        if n_channels == 2:
+            if augment_contrast == True:
+                # Augment the image's contrast
+                improved_img = np.empty_like(img, dtype="float64")
+                improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
+                    img[0, :, :]) - 1, clip_limit=0.0005, kernel_size=int(img[0, :, :].shape[0]/16))
+                improved_img[1, :, :] = equalize_adapthist(img[1, :, :], nbins=np.max(
+                    img[1, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[1, :, :].shape[0]/16))
 
-            # Resize the image
-            scale_x = dim/img.shape[1]
-            scale_y = dim/img.shape[2]
-            processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
 
-            processed_img = processed_img.transpose(
-                (0, 1, 2)).astype('float64')
+                processed_img = processed_img.transpose(
+                    (0, 1, 2)).astype('float64')
 
-        else:
-            # Normalize the image
-            normalized_img = np.empty_like(img, dtype="float64")
-            normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
-            normalized_img[1, :, :] = img[1, :, :]/np.max(img[1, :, :])
+            else:
+                # Normalize the image
+                normalized_img = np.empty_like(img, dtype="float64")
+                normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
+                normalized_img[1, :, :] = img[1, :, :]/np.max(img[1, :, :])
 
-            # Resize the image
-            scale_x = dim/img.shape[1]
-            scale_y = dim/img.shape[2]
-            processed_img = ndi.zoom(normalized_img, zoom=[
-                                     1, scale_x, scale_y])
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(normalized_img, zoom=[
+                                        1, scale_x, scale_y])
 
-            processed_img = processed_img.astype('float64')
-        return processed_img
+                processed_img = processed_img.astype('float64')
+            return processed_img
+            
+        elif n_channels == 1:
+            img = np.expand_dims(img, 0)
+            if augment_contrast == True:
+                # Augment the image's contrast
+                improved_img = np.empty_like(img, dtype="float64")
+                improved_img[0, :, :] = equalize_adapthist(img[0, :, :], nbins=np.max(
+                    img[0, :, :]) - 1, clip_limit=0.005, kernel_size=int(img[0, :, :].shape[0]/16))
+
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(improved_img, zoom=[1, scale_x, scale_y])
+
+                processed_img = processed_img.transpose(
+                    (0, 1, 2)).astype('float64')
+
+            else:
+                # Normalize the image
+                normalized_img = np.empty_like(img, dtype="float64")
+                normalized_img[0, :, :] = img[0, :, :]/np.max(img[0, :, :])
+
+                # Resize the image
+                scale_x = dim/img.shape[1]
+                scale_y = dim/img.shape[2]
+                processed_img = ndi.zoom(normalized_img, zoom=[
+                                        1, scale_x, scale_y])
+
+                processed_img = processed_img.astype('float64')
+            return processed_img
 
     def __getitem__(self, i):
         # Get the id of the image
@@ -254,6 +322,6 @@ class PredictionDataset(Dataset):
         im_shape = img.shape
 
         # Preprocess the image
-        img = self.preprocess_img(img, self.dim).astype('float64')
+        img = self.preprocess_img(img, self.dim, self.n_channels).astype('float64')
 
         return {'image': torch.tensor(img), 'img_path': img_file, 'im_shape': np.array(im_shape)}

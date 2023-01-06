@@ -49,52 +49,7 @@ def resize_prediction(prediction: torch.Tensor, shape: Tuple) -> np.ndarray:
     # Return the resized prediction using ndi's zoom function with order 1
     return ndi.zoom(prediction, (pred_x, float(shape[1] / pred_y), float(shape[2] / pred_z)), order=1)
 
-
-def load_model(model_path: str, device: torch.device) -> Tuple[nn.Module, int, int, int, int, float]:
-    """
-    Loads the model from the given path and returns it, along with other relevant information.
-
-    Parameters:
-        model_path (str): The path to the model checkpoint.
-        device (torch.device): The device to load the model onto.
-
-    Returns:
-        tuple: A tuple containing the following elements:
-            - nn.Module: The loaded model.
-            - int: The number of epochs the model was trained for.
-            - int: The size of the model input.
-            - int: The number of channels in the model input.
-            - int: The number of classes in the model output.
-            - float: The IoU (intersection over union) value for the model.
-    """
-    # Load the checkpoint from the given path and extract relevant information
-    checkpoint = torch.load(model_path, map_location=device)
-    state_dict = checkpoint['model_state_dict']
-    epoch = checkpoint['epoch']
-    iou_val = checkpoint['iou_val']
-    dim = checkpoint['dim']
-    n_classes = checkpoint['n_classes']
-    n_channels = checkpoint['n_channels']
-
-    # Create an instance of the Attention UNet model
-    unet = AttU_Net(n_channels=n_channels, n_classes=n_classes)
-
-    # Create a new ordered dictionary to store the state dictionary without the `module.` prefix
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        name = k[7:]  # remove `module.`
-        new_state_dict[name] = v
-    unet.load_state_dict(new_state_dict)
-    logging.info(f'Model loaded from {model_path}')
-
-    # Move model to the chosen device
-    unet.to(device=device)
-
-    # Return network and relevant information about it
-    return unet, epoch, dim, n_channels, n_classes, iou_val
-
-
-def load_model_parallel(model_path: str, device: torch.device) -> Tuple[nn.Module, int, int, int, int, float]:
+def load_model(model_path: str, device: torch.device, parallel: bool) -> Tuple[nn.Module, int, int, int, int, float]:
     """
     Loads the model from the given path and returns it as a DataParallel model, along with other relevant information.
 
@@ -136,7 +91,8 @@ def load_model_parallel(model_path: str, device: torch.device) -> Tuple[nn.Modul
     torch.cuda.empty_cache()
 
     # Wrap the model in a DataParallel module
-    unet = nn.parallel.DataParallel(unet)
+    if parallel:
+        unet = nn.parallel.DataParallel(unet)
 
     # Move model to the chosen device
     unet.to(device=device)
@@ -175,6 +131,7 @@ def predict(raw_dir: str, output_dir:str, model_path: str, batch_size: int, devi
     
     Parameters:
         raw_dir (str): The directory containing the input images.
+        output_dir (str): The output directory where the segmentation masks will be saved.
         model_path (str): The path to the model.
         batch_size (int): The batch size to use for prediction.
         device (torch.device): The device to run the prediction on.
@@ -184,12 +141,8 @@ def predict(raw_dir: str, output_dir:str, model_path: str, batch_size: int, devi
         os.makedirs(output_dir)
 
     # Load the model
-    if torch.cuda.device_count() > 1:
-        unet, epoch, dim, n_channels, n_classes, iou_val = load_model_parallel(
-            model_path, device)
-    else:
-        unet, epoch, dim, n_channels, n_classes, iou_val = load_model(
-            model_path, device)
+    unet, epoch, dim, n_channels, n_classes, iou_val = load_model(
+        model_path, device, torch.cuda.device_count() > 1)
 
     # Load the prediction dataset
     logging.info("Loading of the prediction database")

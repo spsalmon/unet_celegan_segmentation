@@ -15,15 +15,12 @@ from utils.accuracy import *
 from utils.dataset import *
 from utils.array import *
 
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 from utils.dataset import TrainingDataset
 from torch.utils.data import DataLoader
 from collections import OrderedDict
 
 logging.basicConfig()
-
-# Path where you want your checkpoints saved :
-dir_checkpoints = './checkpoints/'
 
 
 def load_model_parallel(model_path: str, device: torch.device) -> Tuple[nn.Module, int, int, int, int, float]:
@@ -86,6 +83,7 @@ def train_net(net,
               batch_size=1,
               lr=1e-4,
               save_cp=True,
+              dir_checkpoint="./checkpoints/",
               save_frequency=10,
               dim=512):
 
@@ -130,17 +128,15 @@ def train_net(net,
     # Init the loss function
     if (method == "binary"):
         criterion = FocalTverskyLoss()
-        dir_checkpoint = dir_checkpoints
     else:
         criterion = DiceLoss()
-        dir_checkpoint = dir_checkpoints
 
     # Loop for the epoch
     for epoch in range(epochs):
         net.train()
 
         epoch_loss, epoch_step, epoch_loss_val = 0, 0, 0
-        accuracy_val, loss_val, IoU_val = 0, 0, 0
+        loss_val, IoU_val = 0, 0
 
         # Init loop for the step
         with tqdm(total=n_train, desc=f'Epoch {epoch + 1}/{epochs}', unit='img') as pbar:
@@ -286,7 +282,7 @@ def get_args() -> argparse.Namespace:
     # Create a parser and set the formatter class to ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    
+
     # Add the arguments to the parser
     parser.add_argument('-e', '--epochs', dest="epochs", type=int, default=21,
                         help='Number of epochs')
@@ -309,10 +305,11 @@ def get_args() -> argparse.Namespace:
                         help='Path to the directory containing the training set')
     parser.add_argument('--validation-dir', dest='validation_dir', type=str, required=True,
                         help='Path to the directory containing the validation set')
+    parser.add_argument('--checkpoint-dir', dest='dir_checkpoint', type=str, default="./checkpoints/",
+                        help='Path to the directory where the model checkpoints will be saved')
 
     # Parse the arguments and return the resulting namespace object
     return parser.parse_args()
-
 
 
 if __name__ == '__main__':
@@ -322,7 +319,23 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
 
+    dim = args.dim
     n_classes = args.n_classes
+    n_channels = None
+    unet = AttU_Net(1,1)
+    if args.load:
+        del unet
+        unet, epoch, dim, n_channels, n_classes, iou_val = load_model_parallel(
+            args.load, device)
+
+        logging.info(f'''Loading model:
+        Model: {args.load}
+        Epochs : {epoch}
+        IoU on validation set : {iou_val}
+        Classes:   {n_classes}
+        Images dimension:  {dim}
+        Device:          {device.type}
+        ''')
 
     # Creating training and validation datasets
     dir_img_train = args.training_dir + "raw/"
@@ -332,42 +345,28 @@ if __name__ == '__main__':
     dir_mask_val = args.validation_dir + "seg/"
 
     logging.info(f'Loading training dataset')
-    dataset_train = TrainingDataset(
-        dir_img_train, dir_mask_train, method=args.method, n_classes=n_classes, dim=args.dim)
+    dataset_train = TrainingDataset(dir_img_train, dir_mask_train, method=args.method, n_classes=n_classes, dim=dim)
     logging.info(f'Finished loading training dataset')
 
     logging.info(f'Loading validation dataset')
     dataset_val = TrainingDataset(
-        dir_img_val, dir_mask_val, method=args.method, n_classes=n_classes, dim=args.dim)
+        dir_img_val, dir_mask_val, method=args.method, n_classes=n_classes, dim=dim)
     logging.info(f'Finished loading validation dataset')
 
     assert dataset_train.n_channels == dataset_val.n_channels, "Training and validation dataset images don't have the same number of channels."
 
-    # Initializing the neural network
-    net = AttU_Net(n_channels=dataset_train.n_channels,
-                   n_classes=dataset_train.n_classes)
-
-    logging.info(f'Network:\n'
-                 f'\t{net.n_channels} input channels\n'
-                 f'\t{net.n_classes} output channels (classes)\n')
-
-    if torch.cuda.device_count() > 1:
-        if args.load:
-            state_dict = torch.load(args.load)['model_state_dict']
-            new_state_dict = OrderedDict()
-
-            for k, v in state_dict.items():
-                name = k[7:]  # remove `module.`
-                new_state_dict[name] = v
-            net.load_state_dict(new_state_dict)
-            logging.info(f'Model loaded from {args.load}')
-
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        unet = nn.DataParallel(net)
-        unet.cuda()
+    if args.load:
+        assert n_channels == dataset_train.n_channels, f"The model you're loading was trained on images with {n_channels} channels, and the images in your database have {dataset_train.n_channels} channels"
     else:
-        unet = nn.DataParallel(net)
-        unet.cuda()
+        del unet
+        # Initializing the neural network
+        unet = AttU_Net(n_channels=dataset_train.n_channels,
+                        n_classes=dataset_train.n_classes)
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        logging.info(f'Network:\n'
+                     f'\t{unet.n_channels} input channels\n'
+                     f'\t{unet.n_classes} output channels (classes)\n')
+        unet = nn.parallel.DataParallel(unet)
     unet.to(device=device)
 
     try:
@@ -379,10 +378,11 @@ if __name__ == '__main__':
                   method=args.method,
                   batch_size=args.batch_size,
                   lr=args.lr,
+                  dir_checkpoint=args.dir_checkpoint,
                   save_frequency=args.save_frequency,
                   dim=args.dim)
     except KeyboardInterrupt:
-        torch.save(net.state_dict(), 'INTERRUPTED.pth')
+        torch.save(unet.state_dict(), 'INTERRUPTED.pth')
         logging.info('Saved interrupt')
         try:
             sys.exit(0)
